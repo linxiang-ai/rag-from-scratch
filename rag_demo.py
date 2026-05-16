@@ -16,7 +16,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from openai import OpenAI
 
 
 # ==========================================================
@@ -102,16 +102,13 @@ reranker = CrossEncoder(
 # ==========================================================
 # Step 7: LLM (Qwen2.5-7B-Instruct)
 # ==========================================================
-LLM_NAME = "Qwen/Qwen2.5-7B-Instruct"
-print(f"[Step 7] 加载 {LLM_NAME} ...")
-llm_tokenizer = AutoTokenizer.from_pretrained(LLM_NAME)
-llm_model = AutoModelForCausalLM.from_pretrained(
-    LLM_NAME,
-    torch_dtype=torch.bfloat16,
-    device_map='cuda',
+LLM_NAME = "qwen2.5-7b"
+print(f"[Step 7] 连接 vLLM server (model={LLM_NAME}) ...")
+llm_client = OpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="dummy",
 )
-llm_model.eval()
-print("[Step 7] LLM 加载完成\n")
+print("[Step 7] vLLM client 就绪\n")
 
 
 SYSTEM_PROMPT = """你是 Shopee 电商平台的客服助手。请根据下面提供的 FAQ 上下文回答用户问题：
@@ -140,28 +137,19 @@ def retrieve_and_rerank(query, recall_k=20, rerank_k=3):
 # ==========================================================
 # Step 9: LLM 生成
 # ==========================================================
-@torch.no_grad()
 def generate(query, contexts):
     context_text = "\n\n".join(f"[FAQ {i+1}]\n{c}" for i, c in enumerate(contexts))
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": f"参考资料：\n{context_text}\n\n用户问题：{query}"},
     ]
-    text = llm_tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
+    resp = llm_client.chat.completions.create(
+        model=LLM_NAME,
+        messages=messages,
+        max_tokens=200,
+        temperature=0.0,
     )
-    inputs = llm_tokenizer(text, return_tensors='pt').to('cuda')
-    output_ids = llm_model.generate(
-        **inputs,
-        max_new_tokens=200,
-        do_sample=False,
-        repetition_penalty=1.05,
-    )
-    response = llm_tokenizer.decode(
-        output_ids[0][inputs.input_ids.shape[1]:],
-        skip_special_tokens=True
-    )
-    return response.strip()
+    return resp.choices[0].message.content.strip()
 
 
 # ==========================================================

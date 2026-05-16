@@ -83,7 +83,7 @@ Content: 问题：已发货能退款吗
 
 - [x] **v1** — Retrieval with BGE + ChromaDB
 - [x] **v2** — Cross-encoder reranker (`bge-reranker-base` via sentence-transformers)
-- [x] **v2** — LLM generation layer (`Qwen2.5-7B-Instruct` via transformers)
+- [x] **v2** — LLM generation layer (Qwen2.5-7B served by vLLM, server-client API, threshold rejection)
 - [ ] **v2** — Evaluation harness (Recall@k, MRR, LLM-as-judge)
 - [ ] **v3** — Multilingual eval set (Bahasa Indonesia queries)
 - [ ] **v3** — Hybrid retrieval (BM25 + dense)
