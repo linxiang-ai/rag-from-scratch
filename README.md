@@ -82,7 +82,7 @@ Content: 问题：已发货能退款吗
 ## Roadmap
 
 - [x] **v1** — Retrieval with BGE + ChromaDB
-- [ ] **v2** — Cross-encoder reranker (`bge-reranker-base`)
+- [x] **v2** — Cross-encoder reranker (`bge-reranker-base` via sentence-transformers)
 - [ ] **v2** — LLM generation layer (Qwen2.5 / DeepSeek)
 - [ ] **v2** — Evaluation harness (Recall@k, MRR, LLM-as-judge)
 - [ ] **v3** — Multilingual eval set (Bahasa Indonesia queries)

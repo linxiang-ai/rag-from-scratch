@@ -1,7 +1,11 @@
 """
-RAG Demo v1: Shopee 商品问答检索系统
-环境：PyTorch 2.7 + CUDA 12.8 + RTX 5090
-栈：LangChain + ChromaDB + BGE-small-zh-v1.5
+RAG Demo v2: Shopee 商品问答检索系统
+v2: embedding 召回 Top-20 → cross-encoder reranker 精排 Top-3
+
+环境要求：
+- Python 3.10+
+- PyTorch 2.7 + CUDA 12.8
+- 依赖见 requirements.txt
 """
 import os
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
@@ -10,9 +14,12 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
+from sentence_transformers import CrossEncoder
+import torch
+
 
 # ==========================================================
-# Step 1: 准备示例数据（模拟 Shopee 电商 FAQ + 商品知识库）
+# Step 1: 准备示例数据
 # ==========================================================
 faq_data = [
     {"category": "退款", "q": "怎么申请退款", "a": "在订单详情页点击'申请退款'，选择退款原因后上传凭证，等待商家处理。一般 3-5 个工作日内有反馈。"},
@@ -35,19 +42,18 @@ faq_data = [
 
 
 # ==========================================================
-# Step 2: 转换为 LangChain Document 格式
+# Step 2: 转换为 LangChain Document
 # ==========================================================
 documents = []
 for item in faq_data:
     content = f"问题：{item['q']}\n答案：{item['a']}"
     metadata = {"category": item['category'], "question": item['q']}
     documents.append(Document(page_content=content, metadata=metadata))
-
-print(f"✅ Step 2: 加载 {len(documents)} 条 FAQ 数据")
+print(f"[Step 2] 加载 {len(documents)} 条 FAQ 数据")
 
 
 # ==========================================================
-# Step 3: 文档切分（chunk）
+# Step 3: 文档切分
 # ==========================================================
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=200,
@@ -55,57 +61,80 @@ text_splitter = RecursiveCharacterTextSplitter(
     separators=["\n\n", "\n", "。", "！", "？", "，", " "]
 )
 splits = text_splitter.split_documents(documents)
-print(f"✅ Step 3: 文档切分为 {len(splits)} 个 chunks")
+print(f"[Step 3] 文档切分为 {len(splits)} 个 chunks")
 
 
 # ==========================================================
 # Step 4: 加载 Embedding 模型
 # ==========================================================
-print("⏳ Step 4: 加载 BGE-small-zh-v1.5 embedding 模型...")
+print("[Step 4] 加载 BGE-small-zh-v1.5 ...")
 embeddings = HuggingFaceEmbeddings(
     model_name="BAAI/bge-small-zh-v1.5",
-    model_kwargs={'device': 'cuda'},  # 用 GPU 加速
+    model_kwargs={'device': 'cuda'},
     encode_kwargs={'normalize_embeddings': True}
 )
-print("✅ Step 4: Embedding 模型加载完成")
+print("[Step 4] Embedding 加载完成")
 
 
 # ==========================================================
-# Step 5: 向量化存储（ChromaDB）
+# Step 5: 向量化存储
 # ==========================================================
-print("⏳ Step 5: 向量化并存入 ChromaDB...")
+print("[Step 5] 构建 ChromaDB ...")
 vectorstore = Chroma.from_documents(
     documents=splits,
     embedding=embeddings,
     persist_directory='./chroma_db'
 )
-print(f"✅ Step 5: 向量库构建完成，共 {len(splits)} 个向量\n")
+print(f"[Step 5] 向量库构建完成，共 {len(splits)} 个向量")
 
 
 # ==========================================================
-# Step 6: 测试检索
+# Step 6: 加载 Reranker (v2 新增)
 # ==========================================================
-def search(query: str, k: int = 3):
-    print(f"\n🔍 Query: {query}")
+print("[Step 6] 加载 BGE-reranker-base ...")
+reranker = CrossEncoder('BAAI/bge-reranker-base', max_length=512, device='cuda', default_activation_function=torch.nn.Sigmoid())
+print("[Step 6] Reranker 加载完成\n")
+
+
+# ==========================================================
+# Step 7: 两阶段检索 (v2 升级)
+# ==========================================================
+def search(query: str, recall_k: int = 20, rerank_k: int = 3):
+    """embedding 召回 Top-recall_k → reranker 精排 Top-rerank_k"""
+    print(f"\nQuery: {query}")
     print("=" * 60)
-    results = vectorstore.similarity_search_with_score(query, k=k)
-    for i, (doc, score) in enumerate(results, 1):
-        print(f"\n[Top {i}] 相似度: {1 - score:.4f}")
+
+    candidates = vectorstore.similarity_search_with_score(query, k=recall_k)
+    if not candidates:
+        print("无召回结果")
+        return
+
+    pairs = [(query, doc.page_content) for doc, _ in candidates]
+    scores = reranker.predict(pairs).tolist()
+
+    reranked = sorted(
+        zip(candidates, scores),
+        key=lambda x: x[1],
+        reverse=True
+    )[:rerank_k]
+
+    for i, ((doc, embed_score), rerank_score) in enumerate(reranked, 1):
+        print(f"\n[Top {i}] Rerank: {rerank_score:.4f} | Embed: {1 - embed_score:.4f}")
         print(f"分类: {doc.metadata['category']}")
         print(f"内容: {doc.page_content}")
     print("\n" + "=" * 60)
 
 
 # ==========================================================
-# Step 7: 跑几个测试 query
+# Step 8: 测试 query
 # ==========================================================
-test_queries = [
-    "我要退货",
-    "钱什么时候能退回来",
-    "物流停了好几天了",
-    "怎么用印尼本地钱包付款",
-    "买的东西坏了",
-]
-
-for q in test_queries:
-    search(q, k=2)
+if __name__ == "__main__":
+    test_queries = [
+        "我要退货",
+        "钱什么时候能退回来",
+        "物流停了好几天了",
+        "怎么用印尼本地钱包付款",
+        "买的东西坏了",
+    ]
+    for q in test_queries:
+        search(q)
