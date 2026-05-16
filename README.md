@@ -18,21 +18,16 @@ Built while transitioning from academic research (Multimodal PEFT, AAAI 2026) to
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     Q[User Query] --> E[BGE Embedding]
     E --> V[ChromaDB Vector Store]
-    V --> R[Top-k Documents]
-    R --> RR[Cross-encoder Reranker]
-    RR --> LLM[LLM Generation]
-    LLM --> A[Answer]
-
-    style RR stroke-dasharray: 5 5
-    style LLM stroke-dasharray: 5 5
-    style A stroke-dasharray: 5 5
+    V --> R[Top-k Retrieval]
+    R -.-> RR[Cross-encoder Reranker]
+    RR -.-> LLM[LLM Generation]
+    LLM -.-> A[Answer]
 ```
 
-Solid arrows = v1 (current). Dashed = v2 (planned).
-
+Solid arrows = v1 (current). Dashed arrows = v2 (planned).
 ---
 
 ## Quick Start
