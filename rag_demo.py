@@ -1,25 +1,26 @@
 """
-RAG Demo v2: Shopee 商品问答检索系统
-v2: embedding 召回 Top-20 → cross-encoder reranker 精排 Top-3
+RAG Demo v2.1 (milestone 2a)
+完整链路: embedding 召回 Top-20 → reranker 精排 Top-3 → Qwen2.5-7B 生成答案
 
 环境要求：
-- Python 3.10+
-- PyTorch 2.7 + CUDA 12.8
-- 依赖见 requirements.txt
+- Python 3.10+ · PyTorch 2.7 · CUDA 12.8
+- 显存约 17 GB（BGE + reranker + Qwen2.5-7B bf16）
 """
 import os
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
+import shutil
+import torch
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
-import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
 # ==========================================================
-# Step 1: 准备示例数据
+# Step 1: 数据
 # ==========================================================
 faq_data = [
     {"category": "退款", "q": "怎么申请退款", "a": "在订单详情页点击'申请退款'，选择退款原因后上传凭证，等待商家处理。一般 3-5 个工作日内有反馈。"},
@@ -42,30 +43,29 @@ faq_data = [
 
 
 # ==========================================================
-# Step 2: 转换为 LangChain Document
+# Step 2: Document 转换
 # ==========================================================
 documents = []
 for item in faq_data:
     content = f"问题：{item['q']}\n答案：{item['a']}"
     metadata = {"category": item['category'], "question": item['q']}
     documents.append(Document(page_content=content, metadata=metadata))
-print(f"[Step 2] 加载 {len(documents)} 条 FAQ 数据")
+print(f"[Step 2] 加载 {len(documents)} 条 FAQ")
 
 
 # ==========================================================
 # Step 3: 文档切分
 # ==========================================================
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=200,
-    chunk_overlap=20,
+    chunk_size=200, chunk_overlap=20,
     separators=["\n\n", "\n", "。", "！", "？", "，", " "]
 )
 splits = text_splitter.split_documents(documents)
-print(f"[Step 3] 文档切分为 {len(splits)} 个 chunks")
+print(f"[Step 3] 切分为 {len(splits)} 个 chunks")
 
 
 # ==========================================================
-# Step 4: 加载 Embedding 模型
+# Step 4: Embedding
 # ==========================================================
 print("[Step 4] 加载 BGE-small-zh-v1.5 ...")
 embeddings = HuggingFaceEmbeddings(
@@ -73,60 +73,122 @@ embeddings = HuggingFaceEmbeddings(
     model_kwargs={'device': 'cuda'},
     encode_kwargs={'normalize_embeddings': True}
 )
-print("[Step 4] Embedding 加载完成")
 
 
 # ==========================================================
-# Step 5: 向量化存储
+# Step 5: ChromaDB（每次重建避免累积）
 # ==========================================================
+shutil.rmtree('./chroma_db', ignore_errors=True)
 print("[Step 5] 构建 ChromaDB ...")
 vectorstore = Chroma.from_documents(
     documents=splits,
     embedding=embeddings,
     persist_directory='./chroma_db'
 )
-print(f"[Step 5] 向量库构建完成，共 {len(splits)} 个向量")
 
 
 # ==========================================================
-# Step 6: 加载 Reranker (v2 新增)
+# Step 6: Reranker
 # ==========================================================
 print("[Step 6] 加载 BGE-reranker-base ...")
-reranker = CrossEncoder('BAAI/bge-reranker-base', max_length=512, device='cuda', default_activation_function=torch.nn.Sigmoid())
-print("[Step 6] Reranker 加载完成\n")
+reranker = CrossEncoder(
+    'BAAI/bge-reranker-base',
+    max_length=512,
+    device='cuda',
+    default_activation_function=torch.nn.Sigmoid()
+)
 
 
 # ==========================================================
-# Step 7: 两阶段检索 (v2 升级)
+# Step 7: LLM (Qwen2.5-7B-Instruct)
 # ==========================================================
-def search(query: str, recall_k: int = 20, rerank_k: int = 3):
-    """embedding 召回 Top-recall_k → reranker 精排 Top-rerank_k"""
-    print(f"\nQuery: {query}")
-    print("=" * 60)
+LLM_NAME = "Qwen/Qwen2.5-7B-Instruct"
+print(f"[Step 7] 加载 {LLM_NAME} ...")
+llm_tokenizer = AutoTokenizer.from_pretrained(LLM_NAME)
+llm_model = AutoModelForCausalLM.from_pretrained(
+    LLM_NAME,
+    torch_dtype=torch.bfloat16,
+    device_map='cuda',
+)
+llm_model.eval()
+print("[Step 7] LLM 加载完成\n")
 
+
+SYSTEM_PROMPT = """你是 Shopee 电商平台的客服助手。请根据下面提供的 FAQ 上下文回答用户问题：
+- 如果上下文里有明确答案，简洁准确地回复（不超过 80 字）
+- 如果上下文不足以回答，回复"抱歉，我没有相关信息，建议联系人工客服"
+- 不要编造上下文之外的信息或政策"""
+
+
+# ==========================================================
+# Step 8: 检索 + 重排
+# ==========================================================
+def retrieve_and_rerank(query, recall_k=20, rerank_k=3):
     candidates = vectorstore.similarity_search_with_score(query, k=recall_k)
     if not candidates:
-        print("无召回结果")
-        return
-
+        return []
     pairs = [(query, doc.page_content) for doc, _ in candidates]
     scores = reranker.predict(pairs).tolist()
-
     reranked = sorted(
-        zip(candidates, scores),
+        zip([d for d, _ in candidates], scores),
         key=lambda x: x[1],
         reverse=True
     )[:rerank_k]
-
-    for i, ((doc, embed_score), rerank_score) in enumerate(reranked, 1):
-        print(f"\n[Top {i}] Rerank: {rerank_score:.4f} | Embed: {1 - embed_score:.4f}")
-        print(f"分类: {doc.metadata['category']}")
-        print(f"内容: {doc.page_content}")
-    print("\n" + "=" * 60)
+    return reranked
 
 
 # ==========================================================
-# Step 8: 测试 query
+# Step 9: LLM 生成
+# ==========================================================
+@torch.no_grad()
+def generate(query, contexts):
+    context_text = "\n\n".join(f"[FAQ {i+1}]\n{c}" for i, c in enumerate(contexts))
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"参考资料：\n{context_text}\n\n用户问题：{query}"},
+    ]
+    text = llm_tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    inputs = llm_tokenizer(text, return_tensors='pt').to('cuda')
+    output_ids = llm_model.generate(
+        **inputs,
+        max_new_tokens=200,
+        do_sample=False,
+        repetition_penalty=1.05,
+    )
+    response = llm_tokenizer.decode(
+        output_ids[0][inputs.input_ids.shape[1]:],
+        skip_special_tokens=True
+    )
+    return response.strip()
+
+
+# ==========================================================
+# Step 10: 完整 RAG 链路
+# ==========================================================
+def ask(query):
+    print(f"\n[Query] {query}")
+    print("=" * 60)
+    reranked = retrieve_and_rerank(query)
+    print(f"[Retrieved Top-{len(reranked)}]")
+    for i, (doc, score) in enumerate(reranked, 1):
+        preview = doc.page_content.replace('\n', ' ')[:80]
+        print(f"  [{i}] {doc.metadata['category']} | Rerank: {score:.4f}")
+        print(f"      {preview}...")
+    if not reranked or reranked[0][1] < 0.2:
+        print(f"\n[Answer]\n抱歉，我没有相关信息，建议联系人工客服。(Top-1 score={reranked[0][1]:.4f} < 0.2)")
+        print("=" * 60)
+        return
+
+    contexts = [doc.page_content for doc, _ in reranked]
+    answer = generate(query, contexts)
+    print(f"\n[Answer]\n{answer}")
+    print("=" * 60)
+
+
+# ==========================================================
+# Step 11: 测试
 # ==========================================================
 if __name__ == "__main__":
     test_queries = [
@@ -137,4 +199,4 @@ if __name__ == "__main__":
         "买的东西坏了",
     ]
     for q in test_queries:
-        search(q)
+        ask(q)
