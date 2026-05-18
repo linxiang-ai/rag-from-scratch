@@ -1,0 +1,77 @@
+{
+  "n_total": 95,
+  "n_judged": 75,
+  "correctness": {
+    "mean": 4.76,
+    "median": 5,
+    "dist": {
+      "1": 0,
+      "2": 2,
+      "3": 2,
+      "4": 8,
+      "5": 63
+    }
+  },
+  "faithfulness": {
+    "mean": 4.893,
+    "median": 5,
+    "dist": {
+      "1": 1,
+      "2": 0,
+      "3": 1,
+      "4": 2,
+      "5": 71
+    }
+  },
+  "relevance": {
+    "mean": 4.773,
+    "median": 5,
+    "dist": {
+      "1": 2,
+      "2": 1,
+      "3": 1,
+      "4": 4,
+      "5": 67
+    }
+  },
+  "by_type": {
+    "synonym": {
+      "n": 15,
+      "correctness": 4.933,
+      "faithfulness": 5.0,
+      "relevance": 5.0
+    },
+    "colloquial": {
+      "n": 16,
+      "correctness": 4.938,
+      "faithfulness": 5.0,
+      "relevance": 5.0
+    },
+    "scenario": {
+      "n": 14,
+      "correctness": 4.071,
+      "faithfulness": 4.714,
+      "relevance": 4.071
+    },
+    "typo": {
+      "n": 15,
+      "correctness": 5.0,
+      "faithfulness": 5.0,
+      "relevance": 5.0
+    },
+    "brief": {
+      "n": 15,
+      "correctness": 4.8,
+      "faithfulness": 4.733,
+      "relevance": 4.733
+    }
+  },
+  "reject_behavior": {
+    "thr": 0.15,
+    "false_reject_rate": 0.062,
+    "correct_reject_rate": 0.867,
+    "miss_reject_rate": 0.133,
+    "rej_precision": 0.722,
+    "rej_recall": 0.867
+  }
+}

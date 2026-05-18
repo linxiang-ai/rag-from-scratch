@@ -2,7 +2,7 @@
 
 A transparent, reproducible RAG pipeline built as an engineering counterpart to my research in multimodal learning and parameter-efficient tuning. Every component (chunking, embedding, vector store, retrieval) is explicit and inspectable — no framework magic.
 
-**Status:** v1 (retrieval) — v2 (reranker + LLM generation) in progress.  
+**Status:** v2 (reranker + LLM + eval harness) — v3 (multilingual + hybrid) planned.  
 **Stack:** PyTorch 2.7 · LangChain · ChromaDB · BGE Embeddings · CUDA 12.8
 
 ---
@@ -91,6 +91,37 @@ Qwen2.5-7B-Instruct served by vLLM 0.10.0, `gpu_memory_utilization=0.85`, `max_m
 
 See `benchmark.py` for reproduction.
 
+### Evaluation harness (M3)
+
+End-to-end evaluation on a 95-query benchmark (80 rewritten queries across 5 perturbation types + 15 hard negatives).
+
+| Metric | Embedding | +Reranker |
+| :--- | :--- | :--- |
+| Recall@1 | 91.2% | **93.8%** |
+| Recall@3 | 98.8% | **100.0%** |
+| Recall@5 | 98.8% | **100.0%** |
+| MRR@16 | 0.945 | **0.967** |
+
+**Rejection threshold = 0.15** (optimized via F1 sweep over 19 values from 0.05 to 0.50):
+
+| Metric | Value |
+| :--- | :--- |
+| ans-F1 | **0.943** |
+| False-reject rate | 6.2% |
+| Miss-reject rate | 13.3% |
+
+**LLM-as-judge** (Qwen2.5-7B self-eval, n=75 answerable queries):
+
+| Dimension | Mean (1-5) | Median | % rated 5 |
+| :--- | :--- | :--- | :--- |
+| Correctness | 4.76 | 5 | 84% |
+| Faithfulness | 4.89 | 5 | 95% |
+| Relevance | 4.77 | 5 | 89% |
+
+> Self-evaluation has confirmation bias. Production should use a stronger model (GPT-4o-mini or Claude) as independent judge.
+
+See `eval/` for harness code and `eval/results/*.json` for raw outputs.
+
 ---
 
 ## Roadmap
@@ -98,7 +129,7 @@ See `benchmark.py` for reproduction.
 - [x] **v1** — Retrieval with BGE + ChromaDB
 - [x] **v2** — Cross-encoder reranker (`bge-reranker-base` via sentence-transformers)
 - [x] **v2** — LLM generation layer (Qwen2.5-7B served by vLLM, server-client API, threshold rejection)
-- [ ] **v2** — Evaluation harness (Recall@k, MRR, LLM-as-judge)
+- [x] **v2** — Evaluation harness (Recall@k, MRR, LLM-as-judge) — see Performance section
 - [ ] **v3** — Multilingual eval set (Bahasa Indonesia queries)
 - [ ] **v3** — Hybrid retrieval (BM25 + dense)
 

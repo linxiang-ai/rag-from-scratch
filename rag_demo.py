@@ -103,6 +103,7 @@ reranker = CrossEncoder(
 # Step 7: LLM (Qwen2.5-7B-Instruct)
 # ==========================================================
 LLM_NAME = "qwen2.5-7b"
+REJECT_THRESHOLD = 0.15  # milestone 3 阈值扫描最优 (ans-F1=0.943)
 print(f"[Step 7] 连接 vLLM server (model={LLM_NAME}) ...")
 llm_client = OpenAI(
     base_url="http://localhost:8000/v1",
@@ -164,8 +165,8 @@ def ask(query):
         preview = doc.page_content.replace('\n', ' ')[:80]
         print(f"  [{i}] {doc.metadata['category']} | Rerank: {score:.4f}")
         print(f"      {preview}...")
-    if not reranked or reranked[0][1] < 0.2:
-        print(f"\n[Answer]\n抱歉，我没有相关信息，建议联系人工客服。(Top-1 score={reranked[0][1]:.4f} < 0.2)")
+    if not reranked or reranked[0][1] < REJECT_THRESHOLD:
+        print(f"\n[Answer]\n抱歉，我没有相关信息，建议联系人工客服。(Top-1 score={reranked[0][1]:.4f} < {REJECT_THRESHOLD})")
         print("=" * 60)
         return
 
