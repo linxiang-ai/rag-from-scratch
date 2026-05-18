@@ -19,15 +19,17 @@ Built while transitioning from academic research (Multimodal PEFT, AAAI 2026) to
 
 ```mermaid
 flowchart TD
-    Q[User Query] --> E[BGE Embedding]
-    E --> V[ChromaDB Vector Store]
-    V --> R[Top-k Retrieval]
-    R -.-> RR[Cross-encoder Reranker]
-    RR -.-> LLM[LLM Generation]
-    LLM -.-> A[Answer]
+    Q[User Query] --> E[BGE Embedding<br/>bge-small-zh-v1.5, 512-dim]
+    E --> V[ChromaDB<br/>16 FAQ chunks]
+    V --> R[Top-20 Retrieval<br/>cosine similarity]
+    R --> RR[Cross-encoder Reranker<br/>bge-reranker-base]
+    RR --> G{Top-1 score<br/>≥ 0.15?}
+    G -->|No| X[Refuse:<br/>抱歉无相关信息]
+    G -->|Yes| LLM[LLM Generation<br/>Qwen2.5-7B-Instruct<br/>via vLLM]
+    LLM --> A[Answer]
 ```
 
-Solid arrows = v1 (current). Dashed arrows = v2 (planned).
+**Pipeline**: Retrieve → Rerank → Reject (threshold 0.15) → Generate. All components in production.
 ---
 
 ## Quick Start
