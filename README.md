@@ -65,17 +65,31 @@ Content: 问题：已发货能退款吗
 
 ---
 
-## Performance Notes (v1)
+## Performance
 
+### Retrieval (BGE + reranker)
 | Item | Value |
 | :--- | :--- |
-| Corpus size | 16 documents → ~20 chunks |
-| Embedding model | BGE-small-zh-v1.5 (24 MB, 512-dim) |
-| Indexing time | < 5 s on RTX 5090 |
-| Query latency | < 50 ms (warm) |
-| Retrieval quality | qualitative for v1 — MRR / Recall@k benchmarks coming in v2 |
+| Corpus | 16 docs -> ~20 chunks |
+| Embedding | BGE-small-zh-v1.5 (24 MB, 512-dim) |
+| Reranker | bge-reranker-base (cross-encoder, ~280 MB) |
+| Indexing | < 5 s |
+| Retrieval latency | < 50 ms (warm) |
 
-> v1 prioritizes correctness and clarity. Quantitative evaluation on a held-out query set is part of the v2 plan.
+### LLM Generation (vLLM on RTX 4090)
+Qwen2.5-7B-Instruct served by vLLM 0.10.0, `gpu_memory_utilization=0.85`, `max_model_len=4096`.
+
+| Metric | Single query | 10 concurrent |
+| :--- | :--- | :--- |
+| Latency (avg) | 1232 ms | 1697 ms (wall) |
+| Latency (P95) | 1588 ms | -- |
+| Per-query throughput | 62.6 tokens/s | -- |
+| **Aggregate throughput** | -- | **456 tokens/s** |
+| **QPS** | 0.81 | **5.89** |
+
+**Continuous batching speedup**: 10 concurrent queries finish in only ~1.4x the time of a single query, yielding **~7.3x aggregate throughput** vs serial execution. This is the practical advantage of PagedAttention + dynamic batching over transformers single-threaded inference.
+
+See `benchmark.py` for reproduction.
 
 ---
 
